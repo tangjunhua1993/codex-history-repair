@@ -27,10 +27,11 @@ url = "2.5"
 walkdir = "2.5"
 
 [workspace.metadata.dist]
-cargo-dist-version = "0.28.0"
+cargo-dist-version = "0.32.0"
 ci = ["github"]
 installers = ["shell", "powershell", "homebrew"]
 tap = "Alexlangl/homebrew-tap"
+packages = ["codex-history-repair"]
 targets = [
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",
