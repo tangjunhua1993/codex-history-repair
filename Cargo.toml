@@ -1,0 +1,38 @@
+[workspace]
+members = ["crates/core", "crates/cli", "src-tauri"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Alexlangl/codex-history-repair"
+
+[workspace.dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+codex-history-repair-core = { path = "crates/core" }
+dirs = "6.0"
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+sysinfo = "0.39"
+tempfile = "3.23"
+thiserror = "2.0"
+toml_edit = "0.23"
+url = "2.5"
+walkdir = "2.5"
+
+[workspace.metadata.dist]
+cargo-dist-version = "0.28.0"
+ci = ["github"]
+installers = ["shell", "powershell", "homebrew"]
+tap = "Alexlangl/homebrew-tap"
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+]
