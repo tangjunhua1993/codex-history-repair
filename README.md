@@ -108,15 +108,22 @@ sudo xattr -rd com.apple.quarantine "/Applications/Codex History Repair.app"
 - sub2api 导出的 `accounts[]` OpenAI OAuth 账号。
 - cockpit 导出的 Codex 账号 JSON。
 
-CPA / cockpit 格式需要包含 OpenAI 账号的 `access_token` 和 `id_token`：
+CPA / cockpit 格式需要包含 OpenAI 账号 token 信息，尤其是 `access_token`、`refresh_token` 和 `id_token`：
 
 ```json
 {
   "type": "codex",
   "email": "mark@example.com",
-  "access_token": "paste-real-access-token-here",
+  "name": "mark@example.com",
+  "account_id": "00000000-0000-4000-9000-000000000000",
+  "chatgpt_account_id": "00000000-0000-4000-9000-000000000000",
+  "plan_type": "plus",
   "id_token": "paste-real-id-token-here",
-  "account_id": "00000000-0000-4000-9000-000000000000"
+  "access_token": "paste-real-access-token-here",
+  "refresh_token": "paste-real-refresh-token-here",
+  "session_token": "paste-real-session-token-here",
+  "last_refresh": "2026-06-06T11:14:06.884Z",
+  "expired": "2026-08-06T14:29:36.155Z"
 }
 ```
 
@@ -131,8 +138,20 @@ sub2api 格式会读取 `accounts[]` 里的 OpenAI OAuth 账号：
       "type": "oauth",
       "credentials": {
         "access_token": "paste-real-access-token-here",
+        "refresh_token": "paste-real-refresh-token-here",
         "id_token": "paste-real-id-token-here",
-        "account_id": "00000000-0000-4000-9000-000000000000"
+        "account_id": "00000000-0000-4000-9000-000000000000",
+        "chatgpt_account_id": "00000000-0000-4000-9000-000000000000",
+        "workspace_id": "00000000-0000-4000-9000-000000000000",
+        "expires_in": 5282129,
+        "email": "mark@example.com",
+        "plan_type": "plus"
+      },
+      "extra": {
+        "email": "mark@example.com",
+        "last_refresh": "2026-06-06T11:14:06.884Z",
+        "account_id": "00000000-0000-4000-9000-000000000000",
+        "chatgpt_account_id": "00000000-0000-4000-9000-000000000000"
       }
     }
   ]
