@@ -511,28 +511,30 @@ fn collect_state_model_provider_ids(
     codex_dir: &Path,
     target_provider_id: &str,
 ) -> Result<BTreeSet<String>, RepairError> {
-    let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
     let mut ids = BTreeSet::new();
-    if !db_path.exists() {
-        return Ok(ids);
-    }
 
-    let conn = open_sqlite_with_timeout(&db_path)?;
-    if !threads_table_exists(&conn, &db_path)? {
-        return Ok(ids);
-    }
+    for db_path in state_db_paths(codex_dir) {
+        if !db_path.exists() {
+            continue;
+        }
 
-    let mut stmt = conn
-        .prepare("SELECT DISTINCT model_provider FROM threads WHERE model_provider IS NOT NULL")
-        .map_err(|e| RepairError::sqlite(&db_path, e))?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|e| RepairError::sqlite(&db_path, e))?;
-    for row in rows {
-        let id = row.map_err(|e| RepairError::sqlite(&db_path, e))?;
-        let id = id.trim();
-        if !id.is_empty() && id != target_provider_id {
-            ids.insert(id.to_string());
+        let conn = open_sqlite_with_timeout(&db_path)?;
+        if !threads_table_exists(&conn, &db_path)? {
+            continue;
+        }
+
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT model_provider FROM threads WHERE model_provider IS NOT NULL")
+            .map_err(|e| RepairError::sqlite(&db_path, e))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| RepairError::sqlite(&db_path, e))?;
+        for row in rows {
+            let id = row.map_err(|e| RepairError::sqlite(&db_path, e))?;
+            let id = id.trim();
+            if !id.is_empty() && id != target_provider_id {
+                ids.insert(id.to_string());
+            }
         }
     }
     Ok(ids)
@@ -667,46 +669,59 @@ fn migrate_state_db(
         return Ok(0);
     }
 
-    let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
-    if !db_path.exists() {
-        return Ok(0);
-    }
+    let mut total_rows = 0usize;
 
-    let mut conn = open_sqlite_with_timeout(&db_path)?;
-    if !threads_table_exists(&conn, &db_path)? {
-        return Ok(0);
-    }
+    for db_path in state_db_paths(codex_dir) {
+        if !db_path.exists() {
+            continue;
+        }
 
-    let mut rows = 0usize;
-    for source_id in source_provider_ids {
-        rows += conn
-            .query_row(
-                "SELECT COUNT(*) FROM threads WHERE model_provider = ?",
-                [source_id],
-                |row| row.get::<_, i64>(0),
+        let mut conn = open_sqlite_with_timeout(&db_path)?;
+        if !threads_table_exists(&conn, &db_path)? {
+            continue;
+        }
+
+        let mut rows = 0usize;
+        for source_id in source_provider_ids {
+            rows += conn
+                .query_row(
+                    "SELECT COUNT(*) FROM threads WHERE model_provider = ?",
+                    [source_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|e| RepairError::sqlite(&db_path, e))? as usize;
+        }
+        total_rows += rows;
+
+        if rows == 0 || dry_run {
+            continue;
+        }
+
+        let root = ensure_backup_root(codex_dir, backup_root)?;
+        let relative_path = db_path.strip_prefix(codex_dir).unwrap_or(&db_path);
+        backup_sqlite_database(&db_path, &root.join("state").join(relative_path))?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| RepairError::sqlite(&db_path, e))?;
+        for source_id in source_provider_ids {
+            tx.execute(
+                "UPDATE threads SET model_provider = ? WHERE model_provider = ?",
+                [target_provider_id, source_id],
             )
-            .map_err(|e| RepairError::sqlite(&db_path, e))? as usize;
+            .map_err(|e| RepairError::sqlite(&db_path, e))?;
+        }
+        tx.commit().map_err(|e| RepairError::sqlite(&db_path, e))?;
     }
 
-    if rows == 0 || dry_run {
-        return Ok(rows);
-    }
+    Ok(total_rows)
+}
 
-    let root = ensure_backup_root(codex_dir, backup_root)?;
-    backup_sqlite_database(&db_path, &root.join("state").join(CODEX_STATE_DB_FILENAME))?;
-
-    let tx = conn
-        .transaction()
-        .map_err(|e| RepairError::sqlite(&db_path, e))?;
-    for source_id in source_provider_ids {
-        tx.execute(
-            "UPDATE threads SET model_provider = ? WHERE model_provider = ?",
-            [target_provider_id, source_id],
-        )
-        .map_err(|e| RepairError::sqlite(&db_path, e))?;
-    }
-    tx.commit().map_err(|e| RepairError::sqlite(&db_path, e))?;
-    Ok(rows)
+fn state_db_paths(codex_dir: &Path) -> Vec<PathBuf> {
+    vec![
+        codex_dir.join(CODEX_STATE_DB_FILENAME),
+        codex_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
+    ]
 }
 
 fn threads_table_exists(conn: &Connection, db_path: &Path) -> Result<bool, RepairError> {
@@ -1798,6 +1813,43 @@ mod tests {
         assert!(session_text.contains("\"model_provider\":\"custom\""));
 
         let conn = Connection::open(codex_dir.join(CODEX_STATE_DB_FILENAME)).expect("open db");
+        let provider: String = conn
+            .query_row(
+                "SELECT model_provider FROM threads WHERE id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("provider");
+        assert_eq!(provider, "custom");
+    }
+
+    #[test]
+    fn syncs_openai_bucket_in_sqlite_state_directory_when_target_is_custom() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        fs::create_dir_all(codex_dir.join("sqlite")).expect("create sqlite dir");
+
+        let conn = Connection::open(codex_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME))
+            .expect("open db");
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL);
+             INSERT INTO threads (id, model_provider) VALUES ('s1', 'openai');",
+        )
+        .expect("seed db");
+        drop(conn);
+
+        let outcome = repair_codex_history(RepairOptions {
+            codex_dir: codex_dir.clone(),
+            target_provider_id: Some("custom".to_string()),
+            dry_run: false,
+        })
+        .expect("repair");
+
+        assert_eq!(outcome.migrated_state_rows, 1);
+        assert_eq!(outcome.source_provider_ids, vec!["openai".to_string()]);
+
+        let conn = Connection::open(codex_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME))
+            .expect("open db");
         let provider: String = conn
             .query_row(
                 "SELECT model_provider FROM threads WHERE id = 's1'",
